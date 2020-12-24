@@ -7,7 +7,6 @@ byte stepPinX = 2;
 byte dirPinY = 6;
 byte stepPinY = 3;
 
-
 int enPin = 8;
 //measures in mm
 const float beltXLength = 400.f; 
