@@ -1,24 +1,24 @@
-//RICORDA CHE L'INPUT DEL FINECORSA E' (INPUT_PULLUP)
-//dichiaro la direzione e il pin in cui dare l'impulso per l'asse delle X
+//REMEBER THE INPUT OF THE LIMIT SWITCH IS: (INPUT_PULLUP)
+//I declare the direction and the pin in which to give the impulse for the X axis
 byte dirPinX = 5;
 byte stepPinX = 2;
 
-//dichiaro la direzione e il pin in cui dare l'impulso per l'asse delle Y
+//I declare the direction and the pin in which to give the impulse for the Y axis
 byte dirPinY = 6;
 byte stepPinY = 3;
 
 
 int enPin = 8;
-//misure in mm
+//measures in mm
 const float beltXLength = 400.f; 
 const float beltYLength = 400.f; 
 const float stepLength = 1.f; 
 
-//si devono resettare ad ogni spegnimento
+//they must be resetted at every turn off
 float currentX = 0.f; 
 float currentY = 0.f;
 
-//tempo tra un impulso e l'altro
+//time between two pulses
 int pulseWidthMicros = 250;  
 int millisbetweenSteps = 10;
 
@@ -90,13 +90,13 @@ void setup() {
     
   pinMode(enPin, OUTPUT);
   digitalWrite(enPin, LOW);
-  //dichiaro come output il pin dei passi e della direzione per l'asse delle X
+//I declare as output the pin of the steps and of the direction for the X axis
   pinMode(dirPinX, OUTPUT);
   pinMode(stepPinX, OUTPUT);
-  //dichiaro come output il pin dei passi e della direzione per l'asse delle Y 
+  //I declare as output the pin of the steps and of the direction for the Y axis
   pinMode(dirPinY, OUTPUT);
   pinMode(stepPinY, OUTPUT);  
-  //dichiaro il pin del Finecorsa 
+  //I declare the pin of the limit switch 
   pinMode(9, INPUT_PULLUP);
  
   autoHome();
