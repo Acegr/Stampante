@@ -4,7 +4,7 @@
    $Revision: $
    $Creator: Carmine Foggia
    ======================================================================== */
-#include "..\resource.h"
+#include "..\res\resource.h"
 #include <windows.h>
 #include <winuser.h>
 #include <synchapi.h>
@@ -50,7 +50,7 @@ int CALLBACK WinMain
     WindowClass.hIcon         = LoadIcon(hInstance, MAKEINTRESOURCE(TOOLBAR_ICON));
     WindowClass.hCursor       = LoadCursor(0, MAKEINTRESOURCE(IDC_ARROW));
     WindowClass.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    //   WindowClass.lpszMenuName  = MAKEINTRESOURCE(IDR_MENU1);
+    WindowClass.lpszMenuName  = MAKEINTRESOURCE(IDR_MAINMENU);
     WindowClass.lpszClassName = "PrinterWindowClass";
     RegisterClass(&WindowClass);
     Window = CreateWindow("PrinterWindowClass",
