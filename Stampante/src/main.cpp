@@ -5,15 +5,28 @@
    $Creator: Carmine Foggia
    ======================================================================== */
 #include "..\res\resource.h"
+#include "..\lib\lodepng.h"
 #include <windows.h>
 #include <winuser.h>
 #include <synchapi.h>
 
+struct ImageClass
+{
+    char FileName[256];
+    unsigned *Pixels;
+    unsigned w;
+    unsigned h;
+    BITMAPINFO Info;
+};
+
 bool Quit = false;
 HWND Window;
+HDC MainDC;
 HWND SendDialog;
 bool isSendOpen = false;
-char Image[256];
+ImageClass Image;
+bool isAnImageLoaded = false;
+
 
 LRESULT CALLBACK StatusCallback
 (HWND   hWnd,
@@ -91,16 +104,48 @@ LRESULT CALLBACK MainWindowCallback
                 {
                     case ID_IMAGE:
                     {
+                        
                         OPENFILENAME OpenFile {};
                         OpenFile.lStructSize = sizeof(OPENFILENAME);
                         OpenFile.hwndOwner = hWnd;
                         OpenFile.hInstance = GetModuleHandle(0);
                         OpenFile.lpstrFilter = TEXT("PNG images\0*.png\0\0");
-                        OpenFile.lpstrFile = Image;
+                        OpenFile.lpstrFile = Image.FileName;
                         OpenFile.nMaxFile = 255;
                         OpenFile.Flags = OFN_FILEMUSTEXIST;
                         OpenFile.lpstrDefExt = TEXT("png");
-                        GetOpenFileName(&OpenFile);
+                        bool isCancelled = !GetOpenFileName(&OpenFile);
+                        if(isAnImageLoaded && !isCancelled)
+                        {
+                            delete Image.Pixels;
+                        }
+
+                        if(!isCancelled)
+                        {
+                            isAnImageLoaded = true;
+                            unsigned char *ImageRaw;
+                            unsigned wRaw;
+                            unsigned hRaw;
+                            lodepng_decode24_file(&ImageRaw, &wRaw,
+                                                  &hRaw, Image.FileName);
+                            Image.w = wRaw;
+                            Image.h = hRaw;
+                            Image.Pixels = new unsigned[Image.w * Image.h];
+                            for(int i = 0; i < Image.h; i++)
+                            {
+                                for(int j = 0; j < Image.w; j++)
+                                {
+                                    Image.Pixels[i*Image.w+j] = ((ImageRaw[3*(i*Image.w+j)] << 16) | (ImageRaw[3*(i*Image.w+j)+1] << 8) | ImageRaw[3*(i*Image.w+j)+2]);
+                                }
+                            }
+
+                            Image.Info.bmiHeader.biSize = sizeof(Image.Info.bmiHeader);
+                            Image.Info.bmiHeader.biWidth = Image.w;
+                            Image.Info.bmiHeader.biHeight = -Image.h;
+                            Image.Info.bmiHeader.biPlanes = 1;
+                            Image.Info.bmiHeader.biBitCount = 32;
+                            Image.Info.bmiHeader.biCompression = BI_RGB;
+                        }
                         return 0;
                         break;
                     }
@@ -122,6 +167,31 @@ LRESULT CALLBACK MainWindowCallback
                         return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
                     }
                 }
+            }
+            else
+            {
+                return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+            }
+            break;
+        }
+
+        case WM_PAINT:
+        {
+            if(isAnImageLoaded)
+            {
+                PAINTSTRUCT ps;
+                BeginPaint(hWnd, &ps);
+                RECT ClientRect;
+                GetClientRect(hWnd, &ClientRect);
+                StretchDIBits(MainDC,
+                              0, 0,
+                              ClientRect.right - ClientRect.left,
+                              ClientRect.bottom - ClientRect.top,
+                              0, 0,
+                              Image.w, Image.h, Image.Pixels, &Image.Info,
+                              DIB_RGB_COLORS, SRCCOPY);
+                EndPaint(hWnd, &ps);
+                return 0;
             }
             else
             {
@@ -180,6 +250,7 @@ int CALLBACK WinMain
                           NULL,
                           hInstance,
                           NULL);
+    MainDC = GetDC(Window);
     while(!Quit)
     {
         MSG Message;
@@ -192,5 +263,6 @@ int CALLBACK WinMain
         Sleep(16);
         timeEndPeriod(1);
     }
+    ReleaseDC(Window, MainDC);
     return TRUE;
 }
