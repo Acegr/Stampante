@@ -27,6 +27,30 @@ bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
 
+void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsigned h)
+{
+
+    for(int y = 0; y < h; y++)
+    {
+        for(int x = 0; x < w; x++)
+        {
+            unsigned currentPixel = input[y*w+x];
+            unsigned R = currentPixel & 0xFF;
+            unsigned B = (currentPixel & 0xFF00) >> 8;
+            unsigned G = (currentPixel & 0xFF0000) >> 16;
+            unsigned NormToBlack = sqrt(pow(R,2) + pow(B,2) + pow(G,2));
+            unsigned NormToWhite = sqrt(pow(255-R,2) + pow(255-B,2) + pow(255-G,2));
+            if(NormToWhite < NormToBlack)
+            {
+                output[y*w+x] = 0xFFFFFF;
+            }
+            else
+            {
+                output[y*w+x] = 0;
+            }
+        }
+    }
+}
 
 LRESULT CALLBACK StatusCallback
 (HWND   hWnd,
@@ -146,6 +170,12 @@ LRESULT CALLBACK MainWindowCallback
                             Image.Info.bmiHeader.biBitCount = 32;
                             Image.Info.bmiHeader.biCompression = BI_RGB;
                         }
+                        return 0;
+                        break;
+                    }
+                    case ID_PROCESS:
+                    {
+                        GreyScaleEuclideanNorm(Image.Pixels, Image.Pixels, Image.w, Image.h);
                         return 0;
                         break;
                     }
