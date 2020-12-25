@@ -6,9 +6,10 @@
    ======================================================================== */
 #include "..\..\lib\lodepng.h"
 #include <windows.h>
+#include <cmath>
 
 bool Quit = false;
-char Filename[256] = "..\\..\\images\\walls of canterbury.png";
+char Filename[256] = "..\\..\\images\\ausiliari germanici.png";
 HDC WindowDC;
 HWND Window;
 
@@ -20,7 +21,34 @@ struct ImageClass
     BITMAPINFO Info;
 };
 
+unsigned *GreyScale;
+
 ImageClass Image;
+
+void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsigned h)
+{
+
+    for(int y = 0; y < h; y++)
+    {
+        for(int x = 0; x < w; x++)
+        {
+            unsigned currentPixel = input[y*w+x];
+            unsigned R = currentPixel & 0xFF;
+            unsigned B = (currentPixel & 0xFF00) >> 8;
+            unsigned G = (currentPixel & 0xFF0000) >> 16;
+            unsigned NormToBlack = sqrt(pow(R,2) + pow(B,2) + pow(G,2));
+            unsigned NormToWhite = sqrt(pow(255-R,2) + pow(255-B,2) + pow(255-G,2));
+            if(NormToWhite < NormToBlack)
+            {
+                output[y*w+x] = 0xFFFFFF;
+            }
+            else
+            {
+                output[y*w+x] = 0;
+            }
+        }
+    }
+}
 
 LRESULT CALLBACK MainWindowCallback
 (HWND   hWnd,
@@ -49,7 +77,7 @@ LRESULT CALLBACK MainWindowCallback
                           ClientRect.right - ClientRect.left,
                           ClientRect.bottom - ClientRect.top,
                           0, 0,
-                          Image.w, Image.h, Image.Pixels, &Image.Info,
+                          Image.w, Image.h, GreyScale, &Image.Info,
                           DIB_RGB_COLORS, SRCCOPY);
             EndPaint(hWnd, &ps);
             return 0;
@@ -76,6 +104,7 @@ int CALLBACK WinMain
     Image.w = wRaw;
     Image.h = hRaw;
     Image.Pixels = new unsigned[Image.w * Image.h];
+    GreyScale = new unsigned[Image.w * Image.h];
     for(int i = 0; i < Image.h; i++)
     {
         for(int j = 0; j < Image.w; j++)
@@ -84,6 +113,8 @@ int CALLBACK WinMain
         }
     }
 
+    GreyScaleEuclideanNorm(Image.Pixels, GreyScale, Image.w, Image.h);
+    
     Image.Info.bmiHeader.biSize = sizeof(Image.Info.bmiHeader);
     Image.Info.bmiHeader.biWidth = Image.w;
     Image.Info.bmiHeader.biHeight = -Image.h;
