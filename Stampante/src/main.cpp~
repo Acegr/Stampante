@@ -27,7 +27,7 @@ bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
 //this function is used to divide RGB in each of his values(r,g,b) using a property of &(and), visualize each value in a Cartesian axis and then using the 
-//pythagorean theorem convert it into black or white depending on which is nearer.
+//Pythagorean theorem convert it into black or white depending on which is nearer.
 void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsigned h)
 {
 
