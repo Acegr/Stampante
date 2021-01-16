@@ -26,8 +26,11 @@ HWND SendDialog;
 bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
-//this function is used to divide RGB in each of his values(r,g,b) using a property of &(and), visualize each value in a Cartesian axis and then using the 
-//pythagorean theorem convert it into black or white depending on which is nearer.
+
+/*This function converts RGB to black and white: it does this by treating colors as points in 3d-space and assigning to each colour the nearest
+ *between black (0, 0, 0) and white (255, 255, 255)
+ */
+
 void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsigned h)
 {
 
@@ -156,13 +159,13 @@ LRESULT CALLBACK MainWindowCallback
                             Image.w = wRaw;
                             Image.h = hRaw;
                             Image.Pixels = new unsigned[Image.w * Image.h];
-		  //this loops are used for adding all values into a RGB one,all these convertions are to be done  because
-		  // the values are read with a 0 in the end (RGB0)
+//We cconvert from the library's format (24-bit RGB) to windows' (32-bit 0RGB)
                             for(int i = 0; i < Image.h; i++)
                             {
                                 for(int j = 0; j < Image.w; j++)
                                 {
-                                    Image.Pixels[i*Image.w+j] = ((ImageRaw[3*(i*Image.w+j)] << 16) | (ImageRaw[3*(i*Image.w+j)+1] << 8) | ImageRaw[3*(i*Image.w+j)+2]);
+                                    Image.Pixels[i*Image.w+j] =
+                                        ((ImageRaw[3*(i*Image.w+j)] << 16) | (ImageRaw[3*(i*Image.w+j)+1] << 8) | ImageRaw[3*(i*Image.w+j)+2]);
                                 }
                             }
 
