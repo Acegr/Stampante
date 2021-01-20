@@ -25,7 +25,7 @@ float currentX = 0.f;
 float currentY = 0.f;
 
 //time between two pulses
-int pulseWidthMicros = 150;  
+int microseconds = 100;  
 
 
 void moveTo(float x, float y)
@@ -33,7 +33,7 @@ void moveTo(float x, float y)
   
   float xToMove = x - currentX;
   float yToMove = y - currentY;
-  doStep(xToMove, yToMove);
+  doStep(xToMove - currentX, yToMove - currentY);
   currentX = x;
   currentY = y;
 }
@@ -81,7 +81,7 @@ void doStep(int dx, int dy)
   for(int i = 0; i < dx; i++)
    {
     digitalWrite(stepPinX, HIGH);
-    delayMicroseconds(pulseWidthMicros);
+    delayMicroseconds(microseconds);
     digitalWrite(stepPinX, LOW);
    
    }
@@ -89,7 +89,7 @@ void doStep(int dx, int dy)
   for(int i = 0; i < dy; i++)
    {
     digitalWrite(stepPinY, HIGH);
-    delayMicroseconds(pulseWidthMicros);
+    delayMicroseconds(microseconds);
     digitalWrite(stepPinY, LOW);
 
    }
