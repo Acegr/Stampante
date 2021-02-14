@@ -26,7 +26,11 @@ float currentX = 0.f;
 float currentY = 0.f;
 
 //time between two pulses
+<<<<<<< HEAD:TestComandi/Commands_15-01-2021/Commands_15-01-2021.ino
 int microseconds = 600;
+=======
+int microseconds = 100;  
+>>>>>>> 7fdd78a55caaf66e698bdb724bf7cc888081b7ff:TestComandi/Commands_15-01-2021.ino
 
 unsigned long numberOfSteps = 0;
 
@@ -76,6 +80,20 @@ void doStep(long dx, long dy)
     digitalWrite(stepPinX, HIGH);
     delayMicroseconds(microseconds);
     digitalWrite(stepPinX, LOW);
+<<<<<<< HEAD:TestComandi/Commands_15-01-2021/Commands_15-01-2021.ino
+=======
+   
+   }
+   
+  for(int i = 0; i < dy; i++)
+   {
+    digitalWrite(stepPinY, HIGH);
+    delayMicroseconds(microseconds);
+    digitalWrite(stepPinY, LOW);
+
+   }
+}
+>>>>>>> 7fdd78a55caaf66e698bdb724bf7cc888081b7ff:TestComandi/Commands_15-01-2021.ino
 
     for (int i = 0; i < dy; i++)
     {
