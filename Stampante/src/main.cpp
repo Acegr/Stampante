@@ -4,11 +4,42 @@
    $Revision: $
    $Creator: Carmine Foggia
    ======================================================================== */
-#include "..\res\resource.h"
-#include "..\lib\lodepng.h"
+#include <deque>
+#include <stack>
+#include <string.h>
+#include <string>
 #include <windows.h>
 #include <winuser.h>
 #include <synchapi.h>
+#include "..\res\resource.h"
+#include "..\lib\lodepng.h"
+#include "..\lib\files.h"
+
+enum InstructionTypeEnum : unsigned
+{
+    MoveUp, MoveDown, MoveRight, MoveLeft, MoveTo  
+};
+
+class Vector2D
+{
+public:
+    int x;
+    int y;
+    Vector2D(int cx, int cy)
+    {
+        x = cx;
+        y = cy;
+    }
+};
+
+class Instruction
+{
+public:
+    InstructionTypeEnum Type;
+    Vector2D d;
+};
+
+std::deque<Instruction> Path;
 
 struct ImageClass
 {
@@ -26,6 +57,8 @@ HWND SendDialog;
 bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
+HANDLE LogFileHandle;
+
 
 /*This function converts RGB to black and white: it does this by treating colors as points in 3d-space and assigning to each colour the nearest
  *between black (0, 0, 0) and white (255, 255, 255)
@@ -53,6 +86,136 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
                 output[y*w+x] = 0;
             }
         }
+    }
+}
+
+//Our implementation of depth-first search. We do not use the OS's stack because it would overflow
+void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
+{
+    bool doReturn = false;
+    std::stack<Vector2D> DFSStack {};
+    unsigned CurrentX = x;
+    unsigned CurrentY = y;
+    Output.push_back({MoveTo, Vector2D(CurrentX, CurrentY)});
+    Vector2D CurrentPoint(CurrentX, CurrentY);
+    while(true)
+    {
+        //We first look down, then right, then up, then left, then try to pop the stack, if there's no stack we return
+        Vector2D NextPoint(CurrentPoint.x, CurrentPoint.y);
+        PixelStatus[CurrentPoint.y*w+CurrentPoint.x] = 2;
+        if((CurrentPoint.y < h-1) && (PixelStatus[(CurrentPoint.y+1)*w+CurrentPoint.x] == 1))
+        {
+            DFSStack.push(Vector2D(CurrentPoint.x, CurrentPoint.y+1));
+        }
+        if((CurrentPoint.x < w-1) && (PixelStatus[CurrentPoint.y*w+CurrentPoint.x+1] == 1))
+        {
+            DFSStack.push(Vector2D(CurrentPoint.x+1, CurrentPoint.y));
+        }
+        if((CurrentPoint.y > 0) && (PixelStatus[(CurrentPoint.y-1)*w+CurrentPoint.x] == 1))
+        {
+            DFSStack.push(Vector2D(CurrentPoint.x, CurrentPoint.y-1));
+        }
+        if((CurrentPoint.x > 0) && (PixelStatus[CurrentPoint.y*w+CurrentPoint.x-1] == 1))
+        {
+            DFSStack.push(Vector2D(CurrentPoint.x-1, CurrentPoint.y));
+        }
+        while(PixelStatus[NextPoint.y*w+NextPoint.x] == 2 && DFSStack.size() != 0)
+        {
+            NextPoint = DFSStack.top();
+            DFSStack.pop();
+        }
+        if(DFSStack.size() == 0)
+        {
+            return;
+        }
+        if(NextPoint.y == CurrentPoint.y)
+        {
+            if((NextPoint.x - CurrentPoint.x) == 1)
+            {
+                Output.push_back({MoveRight, Vector2D(0, 0)});
+            }
+            else if((NextPoint.x - CurrentPoint.x) == -1)
+            {
+                Output.push_back({MoveLeft, Vector2D(0, 0)});
+            }
+            else
+            {
+                Output.push_back({MoveTo, NextPoint});
+            }
+        }
+        else if(NextPoint.x == CurrentPoint.x)
+        {
+            if((NextPoint.y - CurrentPoint.y) == 1)
+            {
+                Output.push_back({MoveDown, Vector2D(0, 0)});
+            }
+            else if((NextPoint.y - CurrentPoint.y) == -1)
+            {
+                Output.push_back({MoveUp, Vector2D(0, 0)});
+            }
+            else
+            {
+                Output.push_back({MoveTo, NextPoint});
+            }
+        }
+        else
+        {
+            Output.push_back({MoveTo, NextPoint});
+        }
+        CurrentPoint = NextPoint;
+    }
+}
+
+/*Our pathfinding algorithm. The way it works:
+ *We run depth-first search on every black pixel unless it is already on the plotter's path
+ *We keep track of the instructions on a deque, so that we can both add them from the end (when running the algorithm)
+ *and read them from the beginning (when printing)*/
+void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruction>& Output)
+{
+    unsigned *PixelStatus = new unsigned[w*h]; //An array of the same size as the image. Every position is 0 if the corresponding pixel
+                                               //is not coloured, 1 if it is but hasn't been found yet by the pathfinding, 2 if it has
+    for(int y = 0; y < h; y++)
+    {
+        for(int x = 0; x < w; x++)
+        {
+            if(Input[y*w+x] == 0)
+            {
+                PixelStatus[y*w+x] = 1;
+            }
+        }
+    }
+    for(int y = 0; y < h; y++)
+    {
+        for(int x = 0; x < w; x++)
+        {
+            if(PixelStatus[y*w+x] == 1)
+            {
+                DFSRecursion(Input, PixelStatus, w, h, Output, x, y);
+            }
+        }
+    }
+    delete PixelStatus;
+}
+
+void LogInstruction(Instruction instr)
+{
+    char *map[] = {"U", "D", "R", "L", "T"};
+    WriteToLog(map[instr.Type], LogFileHandle);
+    if(instr.Type == MoveTo)
+    {
+        WriteToLog(" ", LogFileHandle);
+        WriteToLog(std::to_string(instr.d.x).c_str(), LogFileHandle);
+        WriteToLog(",", LogFileHandle);
+        WriteToLog(std::to_string(instr.d.y).c_str(), LogFileHandle);
+    }
+    WriteToLog("\n", LogFileHandle);
+}
+
+void LogPathFinding()
+{
+    for(auto it = Path.cbegin(); it != Path.cend(); it++)
+    {
+        LogInstruction(*it);
     }
 }
 
@@ -181,7 +344,13 @@ LRESULT CALLBACK MainWindowCallback
                     }
                     case ID_PROCESS:
                     {
+                        Path.clear();
+                        Log("Starting greyscale conversion", LogFileHandle);
                         GreyScaleEuclideanNorm(Image.Pixels, Image.Pixels, Image.w, Image.h);
+                        Log("Greyscale conversion completed. Starting pathfinding", LogFileHandle);
+                        DFSPathFinding(Image.Pixels, Image.w, Image.h, Path);
+                        LogPathFinding();
+                        Log("Pathfinding completed", LogFileHandle);
                         return 0;
                         break;
                     }
@@ -249,6 +418,11 @@ int CALLBACK WinMain
  LPSTR     lpCmdLine,
  int       nCmdShow)
 {
+    if(!CreateLogFile(&LogFileHandle))
+    {
+        return FALSE;
+    }
+    
     WNDCLASS WindowClass {};
     WindowClass.style         = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
     WindowClass.lpfnWndProc   = MainWindowCallback;
