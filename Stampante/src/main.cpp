@@ -9,11 +9,14 @@
 #include <string.h>
 #include <string>
 #include <windows.h>
+#include <windowsx.h>
 #include <winuser.h>
 #include <synchapi.h>
 #include "..\res\resource.h"
 #include "..\lib\lodepng.h"
 #include "..\lib\files.h"
+
+bool PortsConnected[100] = {};
 
 enum InstructionTypeEnum : unsigned
 {
@@ -58,7 +61,22 @@ bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
 HANDLE LogFileHandle;
+bool SerialListInitialised = false;
 
+void CheckActivePorts()
+{
+    for(int i = 1; i <= 99; i++)
+    {
+        char PortName[] = "\\\\.\\COM\0\0";
+        sprintf((char * const)(PortName+7), "%d", i);
+        HANDLE Port = CreateFile(PortName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if(Port != INVALID_HANDLE_VALUE)
+        {
+            PortsConnected[i] = true;
+            CloseHandle(Port);
+        }
+    }
+}
 
 /*This function converts RGB to black and white: it does this by treating colors as points in 3d-space and assigning to each colour the nearest
  *between black (0, 0, 0) and white (255, 255, 255)
@@ -249,18 +267,79 @@ INT_PTR SendDialogProc
             DestroyWindow(hWnd);
             isSendOpen = false;
             SendDialog = NULL;
+            SerialListInitialised = false;
             return TRUE;
             break;
         }
         case WM_INITDIALOG:
         {
             SendDialog = hWnd;
+            HWND ComboBoxHandle = GetDlgItem(hWnd, IDC_COMBO1);
+            HWND EditBoxHandle = GetDlgItem(hWnd, IDC_EDIT1);
+            CheckActivePorts();
+            for(int i = 1; i <= 99; i++)
+            {
+                if(PortsConnected[i])
+                {
+                    char PortName[] = "COM\0\0";
+                    sprintf((char * const)(PortName+3), "%d", i);
+                    SendMessage(ComboBoxHandle, CB_ADDSTRING, 0,(LPARAM)PortName);        
+                }
+            }
+            if(ComboBox_GetCount(ComboBoxHandle) > 0)
+            {
+                SendMessage(ComboBoxHandle, CB_SETCURSEL, 0, 0);
+                Edit_SetText(EditBoxHandle, "9600");
+                SerialListInitialised = true;
+            }
             return TRUE;
+            break;
+        }
+        case WM_COMMAND:
+        {
+            if(!(wParam & 0xFFFF0000))
+            {
+                switch(wParam & 0xFFFF)
+                {
+                    case IDC_BUTTON1:
+                    {
+                        if(SerialListInitialised)
+                        {
+                            unsigned PortID = SendMessage(GetDlgItem(hWnd, IDC_COMBO1), CB_GETCURSEL, 0, 0);
+                            unsigned PortNumber = 0;
+                            for(int i = 1; i <= 99; i++)
+                            {
+                                if(PortsConnected[i] == true)
+                                {
+                                    if(PortID == 0) PortNumber = i;
+                                    PortID--;
+                                }
+                            }
+                            char PortName[] = "\\\\.\\COM\0\0";
+                            sprintf((char * const)(PortName+7), "%d", PortNumber);
+                            HANDLE Port = CreateFile(PortName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                            if(Port == INVALID_HANDLE_VALUE) return FALSE;
+                            unsigned BytesWritten;
+                            WriteFile(Port, "T", 1, (LPDWORD)&BytesWritten, NULL);
+                            CloseHandle(Port);
+                        }
+                    }
+                    default:
+                    {
+                        return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+            }
             break;
         }
         case WM_DRAWITEM:
         {
-            return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+                return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
             break;
         }
         default:
