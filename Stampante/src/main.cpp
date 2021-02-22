@@ -21,12 +21,19 @@
 const int PaperMaxX = 47660; //as measured by calibrating the printer for an A4 sheet
 const int PaperMaxY = 33700; //
 
+bool TechnicalMode = false;
+
 bool PortsConnected[100] = {};
 
-enum InstructionTypeEnum : unsigned
+enum NTInstructionTypeEnum : unsigned
 {
     MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo  
         };
+
+enum TInstructionTypeEnum : unsigned
+{
+    DrawLine, DrawCircle, DrawEllipse, DrawParabola, DrawHyperbola
+};
 
 class Vector2D
 {
@@ -40,26 +47,42 @@ public:
     }
 };
 
-class Instruction
+class NonTechnicalInstruction
 {
 public:
-    InstructionTypeEnum Type;
+    NTInstructionTypeEnum Type;
     Vector2D d;
-    Instruction(InstructionTypeEnum t, Vector2D v):
+    NonTechnicalInstruction(NTInstructionTypeEnum t, Vector2D v):
             Type(t), d(v)
     {
     }
 };
 
-std::deque<Instruction> Path;
+class TechnicalInstruction
+{
+public:
+    TInstructionTypeEnum Type;
+    float Eccentricity;
+    Vector2D F1;
+    Vector2D F2;
+};
 
-struct ImageClass
+std::deque<NonTechnicalInstruction> Path;
+
+struct ImageClass //This is the buffer in which we store an image in non-technical mode
 {
     char FileName[256];
     unsigned *Pixels;
     unsigned w;
     unsigned h;
     BITMAPINFO Info;
+};
+
+struct TechnicalFile
+{
+    char Filename[256];
+    char *Contents;
+    std::deque<TechnicalInstruction> DecodedContents;
 };
 
 char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
@@ -73,7 +96,9 @@ HDC MainDC;
 HWND SendDialog;
 bool isSendOpen = false;
 ImageClass Image;
+TechnicalFile TechFile;
 bool isAnImageLoaded = false;
+bool isATechFileLoaded = false;
 bool Processed = false;
 HANDLE LogFileHandle;
 bool SerialListInitialised = false;
@@ -91,19 +116,41 @@ void WaitForResponse(HANDLE Port, char ExpectedResponse)
     }
 }
 
-/* The function that sends the image's instruction (for now only in non-technical drawing mode) to Arduino, running in a separate thread
- * It works like this: each "packet" is exactly 9 bytes
+/* The function that sends the image's instructions to Arduino, running in a separate thread
+ *
+ *
+ * In non-technical mode each "packet" is exactly 9 bytes
  * There are six instructions: M for move (lifting the pen up), U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
  * N for doing nothing
  * U, D, R, L, N are 1-byte long, while M is 9-bytes long, of the form MXXXXYYYY, where X and Y are the destination coordinates
  * given in base-16, with the units being pixels
  * No instruction crosses packet boundaries: if an M starts in the middle of a packet, the program pads the packet with N's and puts
  * the M in the next packet
- * After the PC has sent the 9 bytes, Arduino sends a C to confirm reception. If Arduino fails to send a C within 1 second, the whole packet is resent
+ * After the PC has sent the 9 bytes, Arduino sends a C to confirm reception. If Arduino fails to send a C within 1 second, the whole packet is resent.
  * When the printer has completed all the instructions in a packet, it sends a D, allowing the next packet to be sent
  * To signal the start of instructions in non-technical mode, a packet is sent entirely composed of I's, to which Arduino responds with a single I
  * Before the first instruction, a P-packet is sent, with syntax PXXXXYYYY, where X and Y are the image's hexadecimal width and height in pixels
  * When the instructions are over, a packet is sent entirely composed of Q's
+ *
+ * In technical mode each "packet" is 24 bytes
+ * The start packet is composed of T's
+ * The end packet is composed of Q's
+ * Confirmed, redo and done are stil C, R and D
+ * The syntax is: I1.11111XXXXYYYYXXXXYYYY
+ * The first field is I, the instruction type. The instruction type can be:
+ * L (line segment)
+ * C (circle)
+ * E (ellipse)
+ * P (parabola)
+ * H (hyperbola)
+ * The second field is Ecc, a floating-point number specified to 5 significant digits. It is always 0.00000 for a line and a circle,
+ *                    1.00000 for a parabola, while it defines the eccentricity of an ellipse or a hyperbola
+ * The remaining fields are hexadecimal numbers called X1, Y1, X2, Y2 respectively. Their meaning varies depending on the type of instruction:
+ *                    - For a line segment, they define its two endpoints;
+ *                    - For a circle, X1 and Y1 define the centre, while X2 and Y2 is the endpoint of a radius;
+ *                    - For an ellipse and a hyperbola, they define the coordinates of the two foci;
+ *                    - For a parabola, X1 and Y1 define the focus, while X2 and Y2 define the foot of the perpendicular to the directrix
+ *                                        through the focus
  */
 //TODO Finish this, organise it into functions
 void Send(HANDLE Port)
@@ -132,7 +179,8 @@ void Send(HANDLE Port)
         char Packet[10] = {}; //We use sprintf
         while(PacketPosition < 9)
         {
-            Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : Instruction(NoOp, Vector2D(0, 0)); //We have to check whether the deque is empty
+            NonTechnicalInstruction CurrentInstruction = (Path.size() > 0) ?
+                Path.front() : NonTechnicalInstruction(NoOp, Vector2D(0, 0)); //We have to check whether the deque is empty
             if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
             {
                 if(PacketPosition != 0)
@@ -237,7 +285,7 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
 }
 
 //Our implementation of depth-first search. We do not use the OS's stack because it would overflow
-void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
+void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<NonTechnicalInstruction>& Output, unsigned x, unsigned y)
 {
     Output.clear();
     bool doReturn = false;
@@ -318,7 +366,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
  *We run depth-first search on every black pixel unless it is already on the plotter's path
  *We keep track of the instructions on a deque, so that we can both add them from the end (when running the algorithm)
  *and read them from the beginning (when printing)*/
-void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruction>& Output)
+void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<NonTechnicalInstruction>& Output)
 {
     unsigned *PixelStatus = new unsigned[w*h]; //An array of the same size as the image. Every position is 0 if the corresponding pixel
                                                //is not coloured, 1 if it is but hasn't been found yet by the pathfinding, 2 if it has
@@ -345,7 +393,11 @@ void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruct
     delete PixelStatus;
 }
 
-void LogInstruction(Instruction instr)
+void DecodeTechFile(char* input, std::deque<TechnicalInstruction> &output)
+{
+}
+
+void LogInstruction(NonTechnicalInstruction instr)
 {
     char *map[] = {"U", "D", "R", "L", "T"};
     WriteToLog(map[instr.Type], LogFileHandle);
@@ -419,7 +471,6 @@ INT_PTR SendDialogProc
             if(ComboBox_GetCount(ComboBoxHandle) > 0)
             {
                 SendMessage(ComboBoxHandle, CB_SETCURSEL, 0, 0);
-                Edit_SetText(EditBoxHandle, "9600");
                 SerialListInitialised = true;
             }
             return TRUE;
@@ -515,23 +566,59 @@ LRESULT CALLBACK MainWindowCallback
                 {
                     case ID_IMAGE:
                     {
+
+                        char Filename[256] {};
                         
                         OPENFILENAME OpenFile {};
                         OpenFile.lStructSize = sizeof(OPENFILENAME);
                         OpenFile.hwndOwner = hWnd;
                         OpenFile.hInstance = GetModuleHandle(0);
-                        OpenFile.lpstrFilter = TEXT("PNG images\0*.png\0\0");
-                        OpenFile.lpstrFile = Image.FileName;
+                        OpenFile.lpstrFilter = TEXT("PNG images\0*.png\0Technical drawing specification\0*.acegr\0\0");
+                        OpenFile.lpstrFile = Filename;
                         OpenFile.nMaxFile = 255;
                         OpenFile.Flags = OFN_FILEMUSTEXIST;
-                        OpenFile.lpstrDefExt = TEXT("png");
+                        OpenFile.lpstrDefExt = NULL;
                         bool isCancelled = !GetOpenFileName(&OpenFile);
                         if(isAnImageLoaded && !isCancelled)
                         {
                             delete Image.Pixels;
+                            isAnImageLoaded = false;
+                        }
+                        if(isATechFileLoaded && !isCancelled)
+                        {
+                            delete TechFile.Contents;
+                            isATechFileLoaded = false;
                         }
 
-                        if(!isCancelled)
+
+
+                        
+                        //We get the file extension: what's the last letter? g -> png, r -> acegr
+                        int LastLetterPos = 0;
+                        for(int i = 0; i < 256; i++)
+                        {
+                            if(Filename[i] == 0)
+                            {
+                                LastLetterPos = i;
+                                break;
+                            }
+                        }
+                        char LastLetter = Filename[LastLetterPos];
+                        if(LastLetter == 'r')
+                        {
+                            TechnicalMode = true;
+                            memcpy(TechFile.Filename, Filename, 256);
+                        }
+                        else
+                        {
+                            TechnicalMode = false;
+                            memcpy(Image.FileName, Filename, 256);
+                        }
+
+
+
+                        
+                        if(!isCancelled && !TechnicalMode)
                         {
                             isAnImageLoaded = true;
                             unsigned char *ImageRaw;
@@ -559,6 +646,27 @@ LRESULT CALLBACK MainWindowCallback
                             Image.Info.bmiHeader.biBitCount = 32;
                             Image.Info.bmiHeader.biCompression = BI_RGB;
                         }
+
+
+                        
+                        if(!isCancelled && TechnicalMode)
+                        {
+                            HANDLE FileToLoad = CreateFile(TechFile.Filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                            if(!FileToLoad)
+                            {
+                                Log("Error. Cannot load file.", LogFileHandle);
+                            }
+                            else
+                            {
+                                int BytesRead = 0;
+                                int FileSize = 0;
+                                GetFileSize(FileToLoad, (LPDWORD)&FileSize);
+                                TechFile.Contents = new char[FileSize];
+                                ReadFile(FileToLoad, TechFile.Contents, FileSize, (LPDWORD)&BytesRead, NULL);
+                                DecodeTechFile(TechFile.Contents, TechFile.DecodedContents);
+                            }
+                        }
+                        
                         return 0;
                         break;
                     }
