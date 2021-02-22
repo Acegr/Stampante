@@ -12,15 +12,20 @@
 #include <windowsx.h>
 #include <winuser.h>
 #include <synchapi.h>
+#include <thread>
 #include "..\res\resource.h"
 #include "..\lib\lodepng.h"
 #include "..\lib\files.h"
+
+
+const int PaperMaxX = 47670; //as measured by calibrating the printer for an A4 sheet
+const int PaperMaxY = 33710; //
 
 bool PortsConnected[100] = {};
 
 enum InstructionTypeEnum : unsigned
 {
-    MoveUp, MoveDown, MoveRight, MoveLeft, MoveTo  
+    MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo  
 };
 
 class Vector2D
@@ -53,6 +58,11 @@ struct ImageClass
     BITMAPINFO Info;
 };
 
+char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}; //We are lazy and do not want to come up with better ways to convert
+
+char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N'};
+
 bool Quit = false;
 HWND Window;
 HDC MainDC;
@@ -60,9 +70,123 @@ HWND SendDialog;
 bool isSendOpen = false;
 ImageClass Image;
 bool isAnImageLoaded = false;
+bool Processed = false;
 HANDLE LogFileHandle;
 bool SerialListInitialised = false;
+bool isSending = false;
 
+//Waits for a single byte response
+void WaitForResponse(HANDLE Port, char ExpectedResponse)
+{
+    while(true)
+    {
+        char Response[10] = {};
+        ReadFile(Port, &Response, 10, (LPDWORD)&a, NULL);
+        if(Response[0] == ExpectedResponse) return;
+    }
+}
+
+/* The function that sends the image's instruction (for now only in non-technical drawing mode) to Arduino, running in a separate thread
+ * It works like this: each "packet" is exactly 9 bytes
+ * There are six instructions: M for move (lifting the pen up), U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
+ * N for doing nothing
+ * U, D, R, L, N are 1-byte long, while M is 9-bytes long, of the form MXXXXYYYY, where X and Y are the destination coordinates
+ * given in base-16, with the units being engine steps
+ * No instruction crosses packet boundaries: if an M starts in the middle of a packet, the program pads the packet with N's and puts
+ * the M in the next packet
+ * After the PC has sent the 9 bytes, Arduino sends a C to confirm reception. If Arduino fails to send a C within 1 second, the whole packet is resent
+ * When the printer has completed all the instructions in a packet, it sends a D, allowing the next packet to be sent
+ * To signal the start of instructions in non-technical mode, a packet is sent entirely composed of I's, to which Arduino responds with a single I
+ * Before the first instruction, a P-packet is sent, with syntax PXXXXYYYY, where X and Y are the image's hexadecimal width and height in pixels
+ * When the instructions are over, a packet is sent entirely composed of Q's
+ */
+//TODO Finish this, organise it into functions
+void Send(HANDLE Port)
+{
+    unsigned a; //The length of messages sent, we don't care about it, windows needs us to pass this to it
+    
+    char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
+    WriteFile(Port, BeginMessage, 10, (LPDWORD)&a, NULL);
+    WaitForResponse(Port, 'I');
+
+    char PacketImageInfo[10] = {}; //10 so we can use sprintf (it adds a null terminator)
+    sprintf(PacketImageInfo, "P%.4X%.4X", Image.w, Image.h);
+    
+    while(true)
+    {
+        WriteFile(Port, PacketImageInfo, 9, (LPDWORD)&a, NULL);
+        char Response[10] = {};
+        ReadFile(Port, &Response, 10, (LPDWORD)&a, NULL);
+        if(Response[0] == 'C') return;   
+    }
+    
+    while(Path.size()>0)
+    {
+        //We first make the packet...
+        unsigned PacketPosition = 0; //A packet is 9 bytes; we keep track of the bytes we have already filled
+        char Packet[10] = {}; //We use sprintf
+        while(PacketPosition < 9)
+        {
+            Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : {NoOp, {0, 0}}; //We have to check whether the deque is empty
+            if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
+            {
+                if(PacketPosition != 0)
+                {
+                    for(int i = PacketPosition; i < 9; i++)
+                    {
+                        Packet[i] = 'N';
+                    }
+                }
+                else
+                {
+                    Path.pop_front();
+                    if(CurrentInstruction.Type == MoveTo)
+                    {
+                        unsigned XCoordinate = (CurrentInstruction.d.x * PaperMaxX) / Image.w; //TODO: check direction signs on arduino
+                        unsigned YCoordinate = (CurrentInstruction.d.y * PaperMaxY) / Image.h; // are the same as here
+                        sprintf(Packet, "P%.4X%.4X", XCoordinate, YCoordinate);
+                    }            
+                }
+                PacketPosition = 9;
+            }
+            else
+            {
+                Path.pop_front();
+                Packet[PacketPosition] = InstructionLetters[CurrentInstruction.Type];
+                PacketPosition++;
+            }
+        }
+
+
+
+        //Then we send it...
+        bool Success = false;
+        while(!Success)
+        {
+            WriteFile(Port, Packet, 10, (LPDWORD)&a, NULL);
+            char Response = 0;
+            ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
+            if(Response == 'C')
+            {
+                Success = true;
+            }
+        }
+
+
+        
+        //And finally we wait for the command to complete
+        WaitForResponse(Port, 'D');
+        
+    }
+
+    char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
+    WriteFile(Port, EndMessage, 10, (LPDWORD)&a, NULL);
+    
+    isSending = false;
+    CloseHandle(Port);
+}
+
+//We try to open all port to see which ones are active
 void CheckActivePorts()
 {
     for(int i = 1; i <= 99; i++)
@@ -110,6 +234,7 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
 //Our implementation of depth-first search. We do not use the OS's stack because it would overflow
 void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
 {
+    Output.clear();
     bool doReturn = false;
     std::stack<Vector2D> DFSStack {};
     unsigned CurrentX = x;
@@ -303,11 +428,13 @@ INT_PTR SendDialogProc
                 {
                     case IDC_BUTTON1:
                     {
-                        if(SerialListInitialised)
+                        if(Processed && SerialListInitialised && !isSending)
                         {
+                            isSending = true;
                             unsigned PortID = SendMessage(GetDlgItem(hWnd, IDC_COMBO1), CB_GETCURSEL, 0, 0);
                             unsigned PortNumber = 0;
-                            for(int i = 1; i <= 99; i++)
+                            for(int i = 1; i <= 99; i++) //Sadly the current selection is a pretty bad way to identify a port, we have to iterate 
+                                                         //over the available ports using it as an index
                             {
                                 if(PortsConnected[i] == true)
                                 {
@@ -319,9 +446,18 @@ INT_PTR SendDialogProc
                             sprintf((char * const)(PortName+7), "%d", PortNumber);
                             HANDLE Port = CreateFile(PortName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
                             if(Port == INVALID_HANDLE_VALUE) return FALSE;
-                            unsigned BytesWritten;
-                            WriteFile(Port, "T", 1, (LPDWORD)&BytesWritten, NULL);
-                            CloseHandle(Port);
+                            DCB CurrentCommState;
+                            GetCommState(Port, &CurrentCommState);
+                            CurrentCommState.BaudRate = 9600;
+                            CurrentCommState.Parity = NOPARITY;
+                            CurrentCommState.StopBits = ONESTOPBIT;
+                            SetCommState(Port, &CurrentCommState);
+                            COMMTIMEOUTS cto = {};
+                            cto.ReadIntervalTimeout = 100;
+                            SetCommTimeouts(Port, &cto);
+                            std::thread SendingThread (Send, Port);
+                            SendingThread.detach();
+                            return TRUE;
                         }
                     }
                     default:
@@ -423,14 +559,18 @@ LRESULT CALLBACK MainWindowCallback
                     }
                     case ID_PROCESS:
                     {
-                        Path.clear();
-                        Log("Starting greyscale conversion", LogFileHandle);
-                        GreyScaleEuclideanNorm(Image.Pixels, Image.Pixels, Image.w, Image.h);
-                        Log("Greyscale conversion completed. Starting pathfinding", LogFileHandle);
-                        DFSPathFinding(Image.Pixels, Image.w, Image.h, Path);
-                        LogPathFinding();
-                        Log("Pathfinding completed", LogFileHandle);
-                        return 0;
+                        if(isAnImageLoaded)
+                        {
+                            Path.clear();
+                            Log("Starting greyscale conversion", LogFileHandle);
+                            GreyScaleEuclideanNorm(Image.Pixels, Image.Pixels, Image.w, Image.h);
+                            Log("Greyscale conversion completed. Starting pathfinding", LogFileHandle);
+                            DFSPathFinding(Image.Pixels, Image.w, Image.h, Path);
+//                          LogPathFinding();
+                            Log("Pathfinding completed", LogFileHandle);
+                            Processed = true;
+                            return 0;
+                        }
                         break;
                     }
                     case ID_SEND:

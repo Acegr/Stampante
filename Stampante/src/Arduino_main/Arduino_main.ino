@@ -1,5 +1,16 @@
 #include <Servo.h>
+#include <string.h>
 Servo CPencil ;
+
+const unsigned long SheetSizeX = 47670;
+const unsigned long SheetSizeY = 33710; 
+
+unsigned long ImageResolutionX;
+unsigned long ImageResolutionY;
+
+float StepsPerPixelX;
+float StepsPerPixelY;
+
 //I declare the direction and the pin in which to give the impulse for the X axis
 byte dirPinX = 5;
 byte stepPinX = 2;
@@ -16,6 +27,7 @@ int enPin = 8;
 //they must be resetted at every turn off
 float currentX = 0.f;
 float currentY = 0.f;
+
 
 //time between two pulses
 int microseconds = 600;
@@ -61,19 +73,21 @@ void doStep(long dx, long dy)
     }
 }
 
-void moveTo(float x, float y)
+void moveTo(float x, float y) //Coordinates are given in engine steps (1 step = 6.2300 μm as measured)
 {
+  //Using stop switches is too slow (but we should never need these instruction if the program works)
+  if(x > SheetSizeX) x = SheetSizeX;
+  if(y > SheetSizeY) y = SheetSizeY;
   float xToMove = x - currentX;
   float yToMove = y - currentY;
   doStep(xToMove - currentX, yToMove - currentY);
   currentX = x;
-  if (currentX < 0) currentX = 0;
   currentY = y;
-  if (currentY < 0) currentY = 0;
 }
 
 void autoHome()
 {
+  servoWrite(up);
   digitalWrite(dirPinX, LOW);
   digitalWrite(dirPinY,LOW);
   //x motor
@@ -103,6 +117,7 @@ void autoHome()
 }
 void setup() {
   Serial.begin(9600);
+  Serial.setTimeout(500);
   CPencil.attach(4);
   pinMode(enPin, OUTPUT);
   digitalWrite(enPin, LOW);
@@ -115,9 +130,93 @@ void setup() {
   //I declare the pin of the limit switch
   pinMode(9, INPUT_PULLUP);
   pinMode(10, INPUT_PULLUP);
+
+  char LastPacket[9] = {}; //For now we only need to know the last packet
+
+  //We wait for an I from the computer to signal the beginning
+  while(LastPacket[0] != 'I')
+  {
+    Serial.readBytes(LastPacket, 9);
+  }
+  Serial.write("IIIIIIII", 8);
+  delay(1000);
+
+  while(LastPacket[0] != 'P')
+  {
+    memset(LastPacket, 0, 9);
+    Serial.readBytes(LastPacket, 9);
+  }
+  Serial.write("C", 1);
+  sscanf(LastPacket+1, "%.4X%.4X", &ImageResolutionX, &ImageResolutionY);
+  StepsPerPixelX = SheetSizeX / ImageResolutionX;
+  StepsPerPixelY = SheetSizeY / ImageResolutionY;
+
+  while(LastPacket[0] != 'Q')
+  {
+    bool Readable = true;
+    memset(LastPacket, 0, 9);
+    Serial.readBytes(LastPacket, 9);
+    for(int i = 0; i < 10; i++)
+    {
+      if(LastPacket[i] == 0)
+      {
+        Serial.write("F");
+        Readable = false;
+        delay(200);
+      }
+    }
+    if(Readable)
+    {
+      Serial.write("C", 1);
+      if(LastPacket[0] == 'M') //moveTo
+      {
+        servoWrite(up);
+        unsigned long targetX = 0;
+        unsigned long targetY = 0;
+        sscanf(LastPacket+1, "%.4X%.4X", &targetX, &targetY);
+        moveTo(targetX, targetY);
+        servoWrite(down);
+      }
+      else //Every letter is one instruction
+      {
+        for(int i = 0; i < 9; i++)
+        {
+          switch(LastPacket[i])
+          {
+            case 'U':
+            {
+              moveTo(currentX, currentY-StepsPerPixelY);
+              break;
+            }
+            case 'D':
+            {
+              moveTo(currentX, currentY+StepsPerPixelY);
+              break;
+            }
+            case 'R':
+            {
+              moveTo(currentX+StepsPerPixelX, currentY);
+              break;
+            }
+            case 'L':
+            {
+              moveTo(currentX-StepsPerPixelX, currentY);
+              break;
+            }
+            default:
+            {
+              break;
+            }
+          }
+        }
+      }
+      Serial.write("D", 1);
+    }
+  }
+  
 }
 
+//We don't really use the loop, we do everything from the setup
 void loop() {
-  servoWrite(up);
-  
+  delay(1000);
 }
