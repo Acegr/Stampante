@@ -18,15 +18,15 @@
 #include "..\lib\files.h"
 
 
-const int PaperMaxX = 47670; //as measured by calibrating the printer for an A4 sheet
-const int PaperMaxY = 33710; //
+const int PaperMaxX = 47660; //as measured by calibrating the printer for an A4 sheet
+const int PaperMaxY = 33700; //
 
 bool PortsConnected[100] = {};
 
 enum InstructionTypeEnum : unsigned
 {
     MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo  
-};
+        };
 
 class Vector2D
 {
@@ -45,6 +45,10 @@ class Instruction
 public:
     InstructionTypeEnum Type;
     Vector2D d;
+    Instruction(InstructionTypeEnum t, Vector2D v):
+            Type(t), d(v)
+    {
+    }
 };
 
 std::deque<Instruction> Path;
@@ -59,7 +63,7 @@ struct ImageClass
 };
 
 char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
-              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}; //We are lazy and do not want to come up with better ways to convert
+                '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}; //We are lazy and do not want to come up with better ways to convert
 
 char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N'};
 
@@ -78,6 +82,7 @@ bool isSending = false;
 //Waits for a single byte response
 void WaitForResponse(HANDLE Port, char ExpectedResponse)
 {
+    unsigned a;
     while(true)
     {
         char Response[10] = {};
@@ -127,7 +132,7 @@ void Send(HANDLE Port)
         char Packet[10] = {}; //We use sprintf
         while(PacketPosition < 9)
         {
-            Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : {NoOp, {0, 0}}; //We have to check whether the deque is empty
+            Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : Instruction(NoOp, Vector2D(0, 0)); //We have to check whether the deque is empty
             if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
             {
                 if(PacketPosition != 0)
@@ -144,7 +149,7 @@ void Send(HANDLE Port)
                     {
                         unsigned XCoordinate = (CurrentInstruction.d.x * PaperMaxX) / Image.w; //TODO: check direction signs on arduino
                         unsigned YCoordinate = (CurrentInstruction.d.y * PaperMaxY) / Image.h; // are the same as here
-                        sprintf(Packet, "P%.4X%.4X", XCoordinate, YCoordinate);
+                        sprintf(Packet, "M%.4X%.4X", XCoordinate, YCoordinate);
                     }            
                 }
                 PacketPosition = 9;
