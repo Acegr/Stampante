@@ -96,7 +96,7 @@ void WaitForResponse(HANDLE Port, char ExpectedResponse)
  * There are six instructions: M for move (lifting the pen up), U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
  * N for doing nothing
  * U, D, R, L, N are 1-byte long, while M is 9-bytes long, of the form MXXXXYYYY, where X and Y are the destination coordinates
- * given in base-16, with the units being engine steps
+ * given in base-16, with the units being pixels
  * No instruction crosses packet boundaries: if an M starts in the middle of a packet, the program pads the packet with N's and puts
  * the M in the next packet
  * After the PC has sent the 9 bytes, Arduino sends a C to confirm reception. If Arduino fails to send a C within 1 second, the whole packet is resent
@@ -147,8 +147,8 @@ void Send(HANDLE Port)
                     Path.pop_front();
                     if(CurrentInstruction.Type == MoveTo)
                     {
-                        unsigned XCoordinate = (CurrentInstruction.d.x * PaperMaxX) / Image.w; //TODO: check direction signs on arduino
-                        unsigned YCoordinate = (CurrentInstruction.d.y * PaperMaxY) / Image.h; // are the same as here
+                        unsigned XCoordinate = CurrentInstruction.d.x; //TODO: check direction signs on arduino
+                        unsigned YCoordinate = CurrentInstruction.d.y; // are the same as here
                         sprintf(Packet, "M%.4X%.4X", XCoordinate, YCoordinate);
                     }            
                 }

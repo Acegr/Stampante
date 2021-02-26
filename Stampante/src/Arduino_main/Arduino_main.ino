@@ -174,7 +174,7 @@ void setup() {
         unsigned long targetX = 0;
         unsigned long targetY = 0;
         sscanf(LastPacket+1, "%.4X%.4X", &targetX, &targetY);
-        moveTo(targetX, targetY);
+        moveTo(targetX*StepsPerPixelX, targetY*StepsPerPixelY);
         servoWrite(down);
       }
       else //Every letter is one instruction
