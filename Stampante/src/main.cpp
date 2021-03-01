@@ -25,7 +25,7 @@ bool PortsConnected[100] = {};
 
 enum InstructionTypeEnum : unsigned
 {
-    MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo  
+    MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo = 5  
         };
 
 class Vector2D
@@ -65,7 +65,7 @@ struct ImageClass
 char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
                 '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}; //We are lazy and do not want to come up with better ways to convert
 
-char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N'};
+char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N', 'M'};
 
 bool Quit = false;
 HWND Window;
@@ -86,7 +86,7 @@ void WaitForResponse(HANDLE Port, char ExpectedResponse)
     while(true)
     {
         char Response[10] = {};
-        ReadFile(Port, &Response, 10, (LPDWORD)&a, NULL);
+        ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
         if(Response[0] == ExpectedResponse) return;
     }
 }
@@ -113,17 +113,20 @@ void Send(HANDLE Port)
     char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
     WriteFile(Port, BeginMessage, 10, (LPDWORD)&a, NULL);
     WaitForResponse(Port, 'I');
-
+    Log("Board connected.", LogFileHandle);
+    
     char PacketImageInfo[10] = {}; //10 so we can use sprintf (it adds a null terminator)
-    sprintf(PacketImageInfo, "P%.4X%.4X", Image.w, Image.h);
+    sprintf(PacketImageInfo, "P%4X%4X", Image.w, Image.h);
+    Log("Image info sent.", LogFileHandle);
     
     while(true)
     {
         WriteFile(Port, PacketImageInfo, 9, (LPDWORD)&a, NULL);
         char Response[10] = {};
-        ReadFile(Port, &Response, 10, (LPDWORD)&a, NULL);
+        ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
         if(Response[0] == 'C') return;   
     }
+    Log("Instructions starting", LogFileHandle);
     
     while(Path.size()>0)
     {
@@ -149,7 +152,7 @@ void Send(HANDLE Port)
                     {
                         unsigned XCoordinate = CurrentInstruction.d.x; //TODO: check direction signs on arduino
                         unsigned YCoordinate = CurrentInstruction.d.y; // are the same as here
-                        sprintf(Packet, "M%.4X%.4X", XCoordinate, YCoordinate);
+                        sprintf(Packet, "M%4X%4X", XCoordinate, YCoordinate);
                     }            
                 }
                 PacketPosition = 9;
@@ -168,8 +171,9 @@ void Send(HANDLE Port)
         bool Success = false;
         while(!Success)
         {
-            WriteFile(Port, Packet, 10, (LPDWORD)&a, NULL);
+            WriteFile(Port, Packet, 9, (LPDWORD)&a, NULL);
             char Response = 0;
+            Sleep(50);
             ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
             if(Response == 'C')
             {
@@ -181,11 +185,15 @@ void Send(HANDLE Port)
         
         //And finally we wait for the command to complete
         WaitForResponse(Port, 'D');
-        
+
+        char LogMessage[] = {"Sent packet XXXXXXXXX. Instructions left:           "};
+        sprintf(LogMessage, "Sent packet %s. Instructions left: %d.", Packet, Path.size());
+        Log(LogMessage, LogFileHandle);
     }
 
     char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
-    WriteFile(Port, EndMessage, 10, (LPDWORD)&a, NULL);
+    WriteFile(Port, EndMessage, 9, (LPDWORD)&a, NULL);
+    Log("Ending.", LogFileHandle);
     
     isSending = false;
     CloseHandle(Port);
@@ -239,7 +247,6 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
 //Our implementation of depth-first search. We do not use the OS's stack because it would overflow
 void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
 {
-    Output.clear();
     bool doReturn = false;
     std::stack<Vector2D> DFSStack {};
     unsigned CurrentX = x;
@@ -320,8 +327,10 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
  *and read them from the beginning (when printing)*/
 void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruction>& Output)
 {
+    Output.clear();
     unsigned *PixelStatus = new unsigned[w*h]; //An array of the same size as the image. Every position is 0 if the corresponding pixel
                                                //is not coloured, 1 if it is but hasn't been found yet by the pathfinding, 2 if it has
+    memset(PixelStatus, 0, 4*w*h);
     for(int y = 0; y < h; y++)
     {
         for(int x = 0; x < w; x++)
@@ -347,7 +356,7 @@ void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruct
 
 void LogInstruction(Instruction instr)
 {
-    char *map[] = {"U", "D", "R", "L", "T"};
+    char *map[] = {"U", "D", "R", "L", "N", "M"};
     WriteToLog(map[instr.Type], LogFileHandle);
     if(instr.Type == MoveTo)
     {
@@ -356,15 +365,21 @@ void LogInstruction(Instruction instr)
         WriteToLog(",", LogFileHandle);
         WriteToLog(std::to_string(instr.d.y).c_str(), LogFileHandle);
     }
-    WriteToLog("\n", LogFileHandle);
 }
 
 void LogPathFinding()
 {
+    int i = 0;
     for(auto it = Path.cbegin(); it != Path.cend(); it++)
     {
         LogInstruction(*it);
+        i++;
+        if(i % 32 == 0)
+        {
+            WriteToLog("\n", LogFileHandle);
+        }
     }
+    WriteToLog("\n", LogFileHandle);
 }
 
 LRESULT CALLBACK StatusCallback
@@ -571,7 +586,7 @@ LRESULT CALLBACK MainWindowCallback
                             GreyScaleEuclideanNorm(Image.Pixels, Image.Pixels, Image.w, Image.h);
                             Log("Greyscale conversion completed. Starting pathfinding", LogFileHandle);
                             DFSPathFinding(Image.Pixels, Image.w, Image.h, Path);
-//                          LogPathFinding();
+                            LogPathFinding();
                             Log("Pathfinding completed", LogFileHandle);
                             Processed = true;
                             return 0;
