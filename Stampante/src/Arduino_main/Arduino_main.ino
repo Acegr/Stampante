@@ -161,13 +161,12 @@ void loop() {
     bool Readable = true;
     memset(LastPacket, 0, 9);
     Serial.readBytes(LastPacket, 9);
-    bool Readable = true;
-    for(int i = 0; int i < 9; i++)
+    for(int i = 0; i < 9; i++)
     {
-	if(LastPacket[i] == 0)
-	{
-		Readable = false;
-	}
+	    if(LastPacket[i] == 0)
+	      {
+		      Readable = false;
+	      }
     }
     if(Readable)
     {
