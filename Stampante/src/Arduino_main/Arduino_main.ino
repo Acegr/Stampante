@@ -15,7 +15,7 @@ float StepsPerPixelY;
 byte dirPinX = 5;
 byte stepPinX = 2;
 
-int up = 180;
+int up = 120;
 int down = 40;
 
 //I declare the direction and the pin in which to give the impulse for the Y axis
@@ -80,7 +80,7 @@ void moveTo(float x, float y) //Coordinates are given in engine steps (1 step = 
   if(y > SheetSizeY) y = SheetSizeY;
   float xToMove = x - currentX;
   float yToMove = y - currentY;
-  doStep(xToMove - currentX, yToMove - currentY);
+  doStep(xToMove, yToMove);
   currentX = x;
   currentY = y;
 }
@@ -130,6 +130,11 @@ void setup() {
   //I declare the pin of the limit switch
   pinMode(9, INPUT_PULLUP);
   pinMode(10, INPUT_PULLUP);
+  
+}
+
+//We use the loop so the board resets every time after we send a Q
+void loop() {
 
   char LastPacket[9] = {}; //For now we only need to know the last packet
 
@@ -147,7 +152,7 @@ void setup() {
     Serial.readBytes(LastPacket, 9);
   }
   Serial.write("C", 1);
-  sscanf(LastPacket+1, "%.4X%.4X", &ImageResolutionX, &ImageResolutionY);
+  sscanf(LastPacket+1, "%4X%4X", &ImageResolutionX, &ImageResolutionY);
   StepsPerPixelX = SheetSizeX / ImageResolutionX;
   StepsPerPixelY = SheetSizeY / ImageResolutionY;
 
@@ -156,14 +161,13 @@ void setup() {
     bool Readable = true;
     memset(LastPacket, 0, 9);
     Serial.readBytes(LastPacket, 9);
-    for(int i = 0; i < 10; i++)
+    bool Readable = true;
+    for(int i = 0; int i < 9; i++)
     {
-      if(LastPacket[i] == 0)
-      {
-        Serial.write("F");
-        Readable = false;
-        delay(200);
-      }
+	if(LastPacket[i] == 0)
+	{
+		Readable = false;
+	}
     }
     if(Readable)
     {
@@ -213,10 +217,4 @@ void setup() {
       Serial.write("D", 1);
     }
   }
-  
-}
-
-//We don't really use the loop, we do everything from the setup
-void loop() {
-  delay(1000);
 }

@@ -110,8 +110,8 @@ void Send(HANDLE Port)
 {
     unsigned a; //The length of messages sent, we don't care about it, windows needs us to pass this to it
     
-    char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
-    WriteFile(Port, BeginMessage, 10, (LPDWORD)&a, NULL);
+    char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
+    WriteFile(Port, BeginMessage, 9, (LPDWORD)&a, NULL);
     WaitForResponse(Port, 'I');
     Log("Board connected.", LogFileHandle);
     
