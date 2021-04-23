@@ -4,6 +4,14 @@
    $Revision: $
    $Creator: Carmine Foggia
    ======================================================================== */
+/*TODO:
+ *Add stop button to change pencil
+ *Implement technical drawing
+ *Half-tone, palettes
+ *Come up with a decent way to make technical drawing files, do we make
+ *    our own interface? Is there a file format we can hang onto?
+ *    SVG? GeoGebra?
+ */
 #include <deque>
 #include <stack>
 #include <string.h>
@@ -13,6 +21,7 @@
 #include <winuser.h>
 #include <synchapi.h>
 #include <thread>
+#include <math.h>
 #include "..\res\resource.h"
 #include "..\lib\lodepng.h"
 #include "..\lib\files.h"
@@ -25,8 +34,8 @@ bool PortsConnected[100] = {};
 
 enum InstructionTypeEnum : unsigned
 {
-    MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, MoveTo = 5  
-        };
+     MoveUp = 0, MoveDown = 1, MoveRight = 2, MoveLeft = 3, NoOp = 4, Lift = 5
+};
 
 class Vector2D
 {
@@ -49,6 +58,10 @@ public:
             Type(t), d(v)
     {
     }
+  Instruction(InstructionTypeEnum t):
+    Type(t), d(Vector2D(0,0))
+  {
+  }
 };
 
 std::deque<Instruction> Path;
@@ -65,7 +78,7 @@ struct ImageClass
 char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
                 '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}; //We are lazy and do not want to come up with better ways to convert
 
-char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N', 'M'};
+char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N', 'Z'};
 
 bool Quit = false;
 HWND Window;
@@ -93,7 +106,7 @@ void WaitForResponse(HANDLE Port, char ExpectedResponse)
 
 /* The function that sends the image's instruction (for now only in non-technical drawing mode) to Arduino, running in a separate thread
  * It works like this: each "packet" is exactly 9 bytes
- * There are six instructions: M for move (lifting the pen up), U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
+ * There are six instructions: Z for lift/lower, U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
  * N for doing nothing
  * U, D, R, L, N are 1-byte long, while M is 9-bytes long, of the form MXXXXYYYY, where X and Y are the destination coordinates
  * given in base-16, with the units being pixels
@@ -112,10 +125,12 @@ void Send(HANDLE Port)
     
     char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
     WriteFile(Port, BeginMessage, 9, (LPDWORD)&a, NULL);
+    Sleep(100);
     WaitForResponse(Port, 'I');
     Log("Board connected.", LogFileHandle);
     
     char PacketImageInfo[10] = {}; //10 so we can use sprintf (it adds a null terminator)
+    Sleep(100);
     sprintf(PacketImageInfo, "P%4X%4X", Image.w, Image.h);
     Log("Image info sent.", LogFileHandle);
     
@@ -124,7 +139,7 @@ void Send(HANDLE Port)
         WriteFile(Port, PacketImageInfo, 9, (LPDWORD)&a, NULL);
         char Response[10] = {};
         ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
-        if(Response[0] == 'C') return;   
+        if(Response[0] == 'C') break;
     }
     Log("Instructions starting", LogFileHandle);
     
@@ -136,7 +151,7 @@ void Send(HANDLE Port)
         while(PacketPosition < 9)
         {
             Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : Instruction(NoOp, Vector2D(0, 0)); //We have to check whether the deque is empty
-            if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
+            /*if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
             {
                 if(PacketPosition != 0)
                 {
@@ -156,13 +171,13 @@ void Send(HANDLE Port)
                     }            
                 }
                 PacketPosition = 9;
-            }
+		}
             else
-            {
+            {*/
                 Path.pop_front();
                 Packet[PacketPosition] = InstructionLetters[CurrentInstruction.Type];
                 PacketPosition++;
-            }
+		/*}*/
         }
 
 
@@ -173,7 +188,7 @@ void Send(HANDLE Port)
         {
             WriteFile(Port, Packet, 9, (LPDWORD)&a, NULL);
             char Response = 0;
-            Sleep(50);
+            Sleep(100);
             ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
             if(Response == 'C')
             {
@@ -244,6 +259,25 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
     }
 }
 
+//just a crappy hack, hope I find the time to refactor
+void AddMoveTo(std::deque<Instruction>& Output, Vector2D StartPoint, Vector2D EndPoint)
+{
+  unsigned char SignX = 2;
+  if(StartPoint.x > EndPoint.x) SignX = 3; //HACKS
+  unsigned char SignY = 0;
+  if(StartPoint.y < EndPoint.y) SignY = 1; //HACKS
+  Output.push_back(Instruction(Lift));
+  for(int i = 1; i <= abs(EndPoint.x - StartPoint.x); i++)
+  {
+    Output.push_back(Instruction((InstructionTypeEnum)SignX));
+  }
+  for(int i = 1; i <= abs(EndPoint.y - StartPoint.y); i++)
+  {
+    Output.push_back(Instruction((InstructionTypeEnum)SignY));
+  }
+  Output.push_back(Instruction(Lift));
+}
+
 //Our implementation of depth-first search. We do not use the OS's stack because it would overflow
 void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
 {
@@ -251,7 +285,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
     std::stack<Vector2D> DFSStack {};
     unsigned CurrentX = x;
     unsigned CurrentY = y;
-    Output.push_back({MoveTo, Vector2D(CurrentX, CurrentY)});
+    //Output.push_back({MoveTo, Vector2D(CurrentX, CurrentY)});
     Vector2D CurrentPoint(CurrentX, CurrentY);
     while(true)
     {
@@ -295,7 +329,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
             }
             else
             {
-                Output.push_back({MoveTo, NextPoint});
+	        AddMoveTo(Output, CurrentPoint, NextPoint);
             }
         }
         else if(NextPoint.x == CurrentPoint.x)
@@ -309,16 +343,17 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
                 Output.push_back({MoveUp, Vector2D(0, 0)});
             }
             else
-            {
-                Output.push_back({MoveTo, NextPoint});
+	    {
+	        AddMoveTo(Output, CurrentPoint, NextPoint);
             }
         }
         else
-        {
-            Output.push_back({MoveTo, NextPoint});
+	{
+	    AddMoveTo(Output, CurrentPoint, NextPoint);
         }
         CurrentPoint = NextPoint;
     }
+    AddMoveTo(Output, CurrentPoint, Vector2D(0,0)); //HACKS
 }
 
 /*Our pathfinding algorithm. The way it works:
@@ -347,24 +382,26 @@ void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruct
         {
             if(PixelStatus[y*w+x] == 1)
             {
+	      AddMoveTo(Output, Vector2D(0, 0), Vector2D(x, y)); //HACKS
                 DFSRecursion(Input, PixelStatus, w, h, Output, x, y);
             }
         }
     }
+    Output.pop_front(); //HACKS
     delete PixelStatus;
 }
 
 void LogInstruction(Instruction instr)
 {
-    char *map[] = {"U", "D", "R", "L", "N", "M"};
-    WriteToLog(map[instr.Type], LogFileHandle);
-    if(instr.Type == MoveTo)
+  WriteToLog((const char*)(std::to_string(InstructionLetters[instr.Type]).c_str()),
+			   LogFileHandle);
+    /*if(instr.Type == MoveTo)
     {
         WriteToLog(" ", LogFileHandle);
         WriteToLog(std::to_string(instr.d.x).c_str(), LogFileHandle);
         WriteToLog(",", LogFileHandle);
         WriteToLog(std::to_string(instr.d.y).c_str(), LogFileHandle);
-    }
+	}*/
 }
 
 void LogPathFinding()

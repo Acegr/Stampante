@@ -2,6 +2,8 @@
 #include <string.h>
 Servo CPencil ;
 
+bool isUp = true;
+
 const unsigned long SheetSizeX = 47670;
 const unsigned long SheetSizeY = 33710; 
 
@@ -136,6 +138,8 @@ void setup() {
 //We use the loop so the board resets every time after we send a Q
 void loop() {
 
+  autoHome();
+  
   char LastPacket[9] = {}; //For now we only need to know the last packet
 
   //We wait for an I from the computer to signal the beginning
@@ -143,7 +147,7 @@ void loop() {
   {
     Serial.readBytes(LastPacket, 9);
   }
-  Serial.write("IIIIIIII", 8);
+  Serial.write("I", 1);
   delay(1000);
 
   while(LastPacket[0] != 'P')
@@ -171,7 +175,7 @@ void loop() {
     if(Readable)
     {
       Serial.write("C", 1);
-      if(LastPacket[0] == 'M') //moveTo
+      /*if(LastPacket[0] == 'M') //moveTo
       {
         servoWrite(up);
         unsigned long targetX = 0;
@@ -181,7 +185,7 @@ void loop() {
         servoWrite(down);
       }
       else //Every letter is one instruction
-      {
+      {*/
         for(int i = 0; i < 9; i++)
         {
           switch(LastPacket[i])
@@ -206,13 +210,18 @@ void loop() {
               moveTo(currentX-StepsPerPixelX, currentY);
               break;
             }
+            case 'Z':
+            {
+              if(isUp) servoWrite(down);
+              else servoWrite(up);
+            }
             default:
             {
               break;
             }
           }
         }
-      }
+      /*}*/
       Serial.write("D", 1);
     }
   }
