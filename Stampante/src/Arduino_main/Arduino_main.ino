@@ -214,6 +214,7 @@ void loop() {
             {
               if(isUp) servoWrite(down);
               else servoWrite(up);
+              isUp ^= true;
             }
             default:
             {
