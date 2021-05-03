@@ -14,15 +14,15 @@ float StepsPerPixelX;
 float StepsPerPixelY;
 
 //I declare the direction and the pin in which to give the impulse for the X axis
-byte dirPinX = 5;
-byte stepPinX = 2;
-
-int up = 120;
-int down = 40;
-
-//I declare the direction and the pin in which to give the impulse for the Y axis
 byte dirPinY = 6;
 byte stepPinY = 3;
+
+int up = 40;
+int down = 120;
+
+//I declare the direction and the pin in which to give the impulse for the Y axis
+byte dirPinX = 5;
+byte stepPinX = 2;
 
 int enPin = 8;
 
@@ -78,8 +78,6 @@ void doStep(long dx, long dy)
 void moveTo(float x, float y) //Coordinates are given in engine steps (1 step = 6.2300 μm as measured)
 {
   //Using stop switches is too slow (but we should never need these instruction if the program works)
-  if(x > SheetSizeX) x = SheetSizeX;
-  if(y > SheetSizeY) y = SheetSizeY;
   float xToMove = x - currentX;
   float yToMove = y - currentY;
   doStep(xToMove, yToMove);
@@ -138,7 +136,9 @@ void setup() {
 //We use the loop so the board resets every time after we send a Q
 void loop() {
 
-  autoHome();
+  servoWrite(up);
+  //autoHome();
+  
   
   char LastPacket[9] = {}; //For now we only need to know the last packet
 
@@ -212,9 +212,17 @@ void loop() {
             }
             case 'Z':
             {
-              if(isUp) servoWrite(down);
-              else servoWrite(up);
-              isUp ^= true;
+              if(isUp) 
+              {
+                servoWrite(down);
+                isUp = false;
+              }
+              else 
+              {
+                servoWrite(up);
+                isUp = true;
+              }
+              break;
             }
             default:
             {

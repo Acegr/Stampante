@@ -5,6 +5,8 @@
    $Creator: Carmine Foggia
    ======================================================================== */
 /*TODO:
+ *Why are instructions recorded as numbers?
+ *TODO:
  *Add stop button to change pencil
  *Implement technical drawing
  *Half-tone, palettes
@@ -27,7 +29,7 @@
 #include "..\lib\files.h"
 
 
-const int PaperMaxX = 47660; //as measured by calibrating the printer for an A4 sheet
+const int PaperMaxX = 47600; //as measured by calibrating the printer for an A4 sheet
 const int PaperMaxY = 33700; //
 
 bool PortsConnected[100] = {};
@@ -80,6 +82,7 @@ char ToHex[] = {'0', '1', '2', '3', '4', '5', '6', '7',
 
 char InstructionLetters[] = {'U', 'D', 'R', 'L', 'N', 'Z'};
 
+//Runtime global variables
 bool Quit = false;
 HWND Window;
 HDC MainDC;
@@ -91,6 +94,16 @@ bool Processed = false;
 HANDLE LogFileHandle;
 bool SerialListInitialised = false;
 bool isSending = false;
+bool Pause = false;
+bool SendPacket = false;
+bool QuitSending = false;
+
+//Status variables for the "debugging" window
+HDC CustomWindowDC = 0;
+ImageClass DebuggerImage {};
+bool isDebuggerInitialised = false;
+Vector2D CurrentPosition = {0, 0};
+bool PenUp = true;
 
 //Waits for a single byte response
 void WaitForResponse(HANDLE Port, char ExpectedResponse)
@@ -123,7 +136,7 @@ void Send(HANDLE Port)
 {
     unsigned a; //The length of messages sent, we don't care about it, windows needs us to pass this to it
     
-    char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
+    /*char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
     WriteFile(Port, BeginMessage, 9, (LPDWORD)&a, NULL);
     Sleep(100);
     WaitForResponse(Port, 'I');
@@ -132,8 +145,13 @@ void Send(HANDLE Port)
     char PacketImageInfo[10] = {}; //10 so we can use sprintf (it adds a null terminator)
     Sleep(100);
     sprintf(PacketImageInfo, "P%4X%4X", Image.w, Image.h);
-    Log("Image info sent.", LogFileHandle);
+
+
+    int b;
+    sscanf(PacketImageInfo+1, "%4X%4X", &a, &b);
     
+    Log("Image info sent.", LogFileHandle);
+        
     while(true)
     {
         WriteFile(Port, PacketImageInfo, 9, (LPDWORD)&a, NULL);
@@ -141,16 +159,29 @@ void Send(HANDLE Port)
         ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
         if(Response[0] == 'C') break;
     }
-    Log("Instructions starting", LogFileHandle);
+    */
+
+    char PixelSizeString[256] = {};
+    sprintf(PixelSizeString, "Pixel sizes: x=%d, y=%d", PaperMaxX / Image.w, PaperMaxY / Image.h);
     
-    while(Path.size()>0)
+    SetDlgItemText(SendDialog, IDC_PIXELSIZE, PixelSizeString);
+
+    char InstructionNumberString[256] = {};
+    sprintf(InstructionNumberString, "Instructions: %d", Path.size());
+
+    SetDlgItemText(SendDialog, IDC_INSTRUCTIONNUMBER, InstructionNumberString);
+    
+    //Log("Instructions starting", LogFileHandle);
+
+    PenUp = true;
+    while(!Path.empty() && (!Pause || SendPacket) && !QuitSending)
     {
         //We first make the packet...
         unsigned PacketPosition = 0; //A packet is 9 bytes; we keep track of the bytes we have already filled
         char Packet[10] = {}; //We use sprintf
         while(PacketPosition < 9)
         {
-            Instruction CurrentInstruction = (Path.size() > 0) ? Path.front() : Instruction(NoOp, Vector2D(0, 0)); //We have to check whether the deque is empty
+	  Instruction CurrentInstruction = (Path.empty()) ? Instruction(NoOp, Vector2D(0, 0)) : Path.front(); //We have to check whether the deque is empty
             /*if(Path.front().Type == MoveTo) //Instructions never cross packet boundaries
             {
                 if(PacketPosition != 0)
@@ -174,14 +205,51 @@ void Send(HANDLE Port)
 		}
             else
             {*/
-                Path.pop_front();
+	  if(!Path.empty()) Path.pop_front();
                 Packet[PacketPosition] = InstructionLetters[CurrentInstruction.Type];
                 PacketPosition++;
 		/*}*/
+
+
+		//TODO: remake instructions completely, make them be (x, y, lift)
+		switch(CurrentInstruction.Type)
+		  {
+		  case MoveUp:
+		    {
+		      CurrentPosition.y -= 1;
+		      break;
+		    }
+		  case MoveDown:
+		    {
+		      CurrentPosition.y += 1;
+		      break;
+		    }
+		  case MoveRight:
+		    {
+		      CurrentPosition.x += 1;
+		      break;
+		    }
+		  case MoveLeft:
+		    {
+		      CurrentPosition.x -= 1;
+		      break;
+		    }
+		  case Lift:
+		    {
+		      PenUp ^= true;
+		      break;
+		    }
+		  }
+		if(!PenUp)
+		    DebuggerImage.Pixels[CurrentPosition.y*DebuggerImage.w+CurrentPosition.x] = 0;
         }
 
+	if(Path.size() < 10)
+	  {
+	    int a = 1;
+	  }
 
-
+	/*
         //Then we send it...
         bool Success = false;
         while(!Success)
@@ -204,14 +272,17 @@ void Send(HANDLE Port)
         char LogMessage[] = {"Sent packet XXXXXXXXX. Instructions left:           "};
         sprintf(LogMessage, "Sent packet %s. Instructions left: %d.", Packet, Path.size());
         Log(LogMessage, LogFileHandle);
+	*/
+	SendPacket = false;
     }
 
-    char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
+    /* char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
     WriteFile(Port, EndMessage, 9, (LPDWORD)&a, NULL);
     Log("Ending.", LogFileHandle);
-    
+    */
     isSending = false;
-    CloseHandle(Port);
+    QuitSending = false;
+//CloseHandle(Port);
 }
 
 //We try to open all port to see which ones are active
@@ -262,18 +333,17 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
 //just a crappy hack, hope I find the time to refactor
 void AddMoveTo(std::deque<Instruction>& Output, Vector2D StartPoint, Vector2D EndPoint)
 {
-  unsigned char SignX = 2;
-  if(StartPoint.x > EndPoint.x) SignX = 3; //HACKS
-  unsigned char SignY = 0;
-  if(StartPoint.y < EndPoint.y) SignY = 1; //HACKS
+  InstructionTypeEnum XDirection, YDirection;
+  if(StartPoint.x < EndPoint.x) XDirection = MoveRight; else XDirection = MoveLeft;
+  if(StartPoint.y < EndPoint.y) YDirection = MoveDown; else YDirection = MoveUp;
   Output.push_back(Instruction(Lift));
   for(int i = 1; i <= abs(EndPoint.x - StartPoint.x); i++)
   {
-    Output.push_back(Instruction((InstructionTypeEnum)SignX));
+    Output.push_back(Instruction(XDirection));
   }
   for(int i = 1; i <= abs(EndPoint.y - StartPoint.y); i++)
   {
-    Output.push_back(Instruction((InstructionTypeEnum)SignY));
+    Output.push_back(Instruction(YDirection));
   }
   Output.push_back(Instruction(Lift));
 }
@@ -315,7 +385,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
         }
         if(DFSStack.size() == 0)
         {
-            return;
+            break;
         }
         if(NextPoint.y == CurrentPoint.y)
         {
@@ -393,7 +463,9 @@ void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruct
 
 void LogInstruction(Instruction instr)
 {
-  WriteToLog((const char*)(std::to_string(InstructionLetters[instr.Type]).c_str()),
+  char ToSend[2] = {};
+  ToSend[0] = InstructionLetters[instr.Type];
+  WriteToLog(ToSend,
 			   LogFileHandle);
     /*if(instr.Type == MoveTo)
     {
@@ -427,6 +499,59 @@ LRESULT CALLBACK StatusCallback
 {
     switch(uMsg)
     {
+    case WM_SHOWWINDOW:
+      {
+	if(!isDebuggerInitialised && Processed)
+	  {
+	    isDebuggerInitialised = true;
+	    DebuggerImage.Info = Image.Info;
+	    memcpy(DebuggerImage.FileName, Image.FileName, 256);
+	    DebuggerImage.w = Image.w;
+	    DebuggerImage.h = Image.h;
+	    DebuggerImage.Pixels = new unsigned[Image.w * Image.h];
+	    memcpy(DebuggerImage.Pixels, Image.Pixels, sizeof(unsigned) * Image.w * Image.h);
+	    for(int i = 0; i < Image.w * Image.h; i++)
+	      {
+		if(Image.Pixels[i] == 0) DebuggerImage.Pixels[i] = 0x808080;
+	      }
+	  }
+	return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+	break;
+      }
+    case WM_CLOSE:
+    case WM_QUIT:
+    case WM_DESTROY:
+      {
+	isDebuggerInitialised = false;
+	delete DebuggerImage.Pixels;
+	return 0;
+	break;
+      }
+       case WM_PAINT:
+      {
+if(isDebuggerInitialised)
+            {
+	      InvalidateRect(hWnd, NULL, FALSE);
+                PAINTSTRUCT ps;
+                HDC DCToUse = BeginPaint(hWnd, &ps);
+                RECT ClientRect;
+                GetClientRect(hWnd, &ClientRect);
+                int a = StretchDIBits(DCToUse,
+                              0, 0,
+                              ClientRect.right - ClientRect.left,
+                              ClientRect.bottom - ClientRect.top,
+                              0, 0,
+                              DebuggerImage.w, DebuggerImage.h, DebuggerImage.Pixels, &DebuggerImage.Info,
+                              DIB_RGB_COLORS, SRCCOPY);
+                EndPaint(hWnd, &ps);
+                return 0;
+            }
+            else
+            {
+                return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
+		}
+            break;
+	    }
         default:
         {
             return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
@@ -446,10 +571,12 @@ INT_PTR SendDialogProc
         case WM_DESTROY:
         case WM_QUIT:
         {
+	  DestroyWindow(GetDlgItem(hWnd, IDC_CUSTOM1));
             DestroyWindow(hWnd);
             isSendOpen = false;
             SendDialog = NULL;
             SerialListInitialised = false;
+	    ReleaseDC(GetDlgItem(hWnd, IDC_CUSTOM1), CustomWindowDC);
             return TRUE;
             break;
         }
@@ -457,7 +584,8 @@ INT_PTR SendDialogProc
         {
             SendDialog = hWnd;
             HWND ComboBoxHandle = GetDlgItem(hWnd, IDC_COMBO1);
-            HWND EditBoxHandle = GetDlgItem(hWnd, IDC_EDIT1);
+            HWND EditBoxHandle = GetDlgItem(hWnd, IDC_PIXELSIZE);
+	    CustomWindowDC = GetDC(GetDlgItem(hWnd, IDC_CUSTOM1));
             CheckActivePorts();
             for(int i = 1; i <= 99; i++)
             {
@@ -483,12 +611,12 @@ INT_PTR SendDialogProc
             {
                 switch(wParam & 0xFFFF)
                 {
-                    case IDC_BUTTON1:
+                    case IDC_SEND:
                     {
-                        if(Processed && SerialListInitialised && !isSending)
+		      if(Processed /*&& SerialListInitialised*/ && !isSending)
                         {
                             isSending = true;
-                            unsigned PortID = SendMessage(GetDlgItem(hWnd, IDC_COMBO1), CB_GETCURSEL, 0, 0);
+                            /*unsigned PortID = SendMessage(GetDlgItem(hWnd, IDC_COMBO1), CB_GETCURSEL, 0, 0);
                             unsigned PortNumber = 0;
                             for(int i = 1; i <= 99; i++) //Sadly the current selection is a pretty bad way to identify a port, we have to iterate 
                                                          //over the available ports using it as an index
@@ -511,12 +639,28 @@ INT_PTR SendDialogProc
                             SetCommState(Port, &CurrentCommState);
                             COMMTIMEOUTS cto = {};
                             cto.ReadIntervalTimeout = 100;
-                            SetCommTimeouts(Port, &cto);
-                            std::thread SendingThread (Send, Port);
+                            SetCommTimeouts(Port, &cto);*/
+                            //std::thread SendingThread (Send, Port);
+			    std::thread SendingThread (Send, INVALID_HANDLE_VALUE);
                             SendingThread.detach();
                             return TRUE;
                         }
                     }
+		    case IDC_PAUSE:
+		    {
+		      Pause ^= true;
+		        break;
+		    }
+		    case IDC_SENDPACKET:
+		    {
+		      SendPacket = true;
+		      break;
+		    }
+		case IDC_QUIT:
+		  {
+		    QuitSending = true;
+		    break;
+		  }
                     default:
                     {
                         return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
@@ -532,6 +676,23 @@ INT_PTR SendDialogProc
         }
         case WM_DRAWITEM:
         {
+	  /*	  HWND CustomDialogHandle = GetDlgItem(hWnd, IDC_CUSTOM1);
+	  if(Processed)
+	    {
+	      PAINTSTRUCT ps;
+                HDC DCToUse = BeginPaint(CustomDialogHandle, &ps);
+                RECT ClientRect;
+                GetClientRect(CustomDialogHandle, &ClientRect);
+                StretchDIBits(DCToUse,
+                              0, 0,
+                              ClientRect.right - ClientRect.left,
+                              ClientRect.bottom - ClientRect.top,
+                              0, 0,
+                              Image.w, Image.h, Image.Pixels, &Image.Info,
+                              DIB_RGB_COLORS, SRCCOPY);
+                EndPaint(hWnd, &ps);
+                
+		}*/
                 return CallWindowProc(DefWindowProc, hWnd, uMsg, wParam, lParam);
             break;
         }
@@ -745,6 +906,7 @@ int CALLBACK WinMain
             TranslateMessage(&Message);
             DispatchMessage(&Message);
         }
+	if(isSendOpen) RedrawWindow(GetDlgItem(SendDialog, IDC_CUSTOM1), NULL, NULL, RDW_INTERNALPAINT);
         timeBeginPeriod(1);
         Sleep(16);
         timeEndPeriod(1);
