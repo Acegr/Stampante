@@ -14,15 +14,15 @@ float StepsPerPixelX;
 float StepsPerPixelY;
 
 //I declare the direction and the pin in which to give the impulse for the X axis
-byte dirPinY = 6;
-byte stepPinY = 3;
+byte dirPinY = 5;
+byte stepPinY = 2;
 
 int up = 40;
-int down = 120;
+int down = 170;
 
 //I declare the direction and the pin in which to give the impulse for the Y axis
-byte dirPinX = 5;
-byte stepPinX = 2;
+byte dirPinX = 6;
+byte stepPinX = 3;
 
 int enPin = 8;
 
@@ -137,7 +137,7 @@ void setup() {
 void loop() {
 
   servoWrite(up);
-  //autoHome();
+  //autoHome()
   
   
   char LastPacket[9] = {}; //For now we only need to know the last packet
@@ -163,8 +163,8 @@ void loop() {
   while(LastPacket[0] != 'Q')
   {
     bool Readable = true;
-    memset(LastPacket, 0, 9);
-    Serial.readBytes(LastPacket, 9);
+    memset(LastPacket, 0, 32);
+    Serial.readBytes(LastPacket, 32);
     for(int i = 0; i < 9; i++)
     {
 	    if(LastPacket[i] == 0)
@@ -186,7 +186,7 @@ void loop() {
       }
       else //Every letter is one instruction
       {*/
-        for(int i = 0; i < 9; i++)
+        for(int i = 0; i < 32; i++)
         {
           switch(LastPacket[i])
           {

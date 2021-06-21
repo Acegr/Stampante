@@ -5,8 +5,10 @@
    $Creator: Carmine Foggia
    ======================================================================== */
 /*TODO:
+ *Pause does not work
+ *This does not reset correctly after finishing a drawing
+ *This once stalled in the middle of a drawing, was it the PC's standby or a bug?
  *Add option to show progress monitor in fullscreen
- *Enlarge packet size to improve speed
  *Test paper size
  *Refactor, polish all those hacks
  *TODO:
@@ -34,6 +36,7 @@
 
 const int PaperMaxX = 47600; //as measured by calibrating the printer for an A4 sheet
 const int PaperMaxY = 33700; //
+const int ImagePacketSize = 32;
 
 bool PortsConnected[100] = {};
 
@@ -108,6 +111,8 @@ bool isDebuggerInitialised = false;
 Vector2D CurrentPosition = {0, 0};
 bool PenUp = true;
 
+Vector2D LastPoint = {0,0};
+
 //Waits for a single byte response
 void WaitForResponse(HANDLE Port, char ExpectedResponse)
 {
@@ -121,23 +126,24 @@ void WaitForResponse(HANDLE Port, char ExpectedResponse)
 }
 
 /* The function that sends the image's instruction (for now only in non-technical drawing mode) to Arduino, running in a separate thread
- * It works like this: each "packet" is exactly 9 bytes
+ * It works like this: each "packet" is exactly 32 bytes
  * There are six instructions: Z for lift/lower, U, D, R, L for moving respectively up, down, right, left by 1 pixel with pen down,
  * N for doing nothing
- * U, D, R, L, N are 1-byte long, while M is 9-bytes long, of the form MXXXXYYYY, where X and Y are the destination coordinates
- * given in base-16, with the units being pixels
- * No instruction crosses packet boundaries: if an M starts in the middle of a packet, the program pads the packet with N's and puts
- * the M in the next packet
- * After the PC has sent the 9 bytes, Arduino sends a C to confirm reception. If Arduino fails to send a C within 1 second, the whole packet is resent
+ * Each instruction is 32-byte long
+ * After the PC has sent the 32 bytes, Arduino sends a C to confirm reception. 
+ * If Arduino fails to send a C within 1 second, 
+ * the whole packet is resent (NOTE do we want this? It's probably what makes pause not work correctly)
  * When the printer has completed all the instructions in a packet, it sends a D, allowing the next packet to be sent
- * To signal the start of instructions in non-technical mode, a packet is sent entirely composed of I's, to which Arduino responds with a single I
- * Before the first instruction, a P-packet is sent, with syntax PXXXXYYYY, where X and Y are the image's hexadecimal width and height in pixels
- * When the instructions are over, a packet is sent entirely composed of Q's
+ * To signal the start of instructions in non-technical mode, a packet is sent entirely composed of I's, 
+ * to which Arduino responds with a single I
+ * Before the first instruction, a P-packet is sent, with syntax PXXXXYYYY, 
+ * where X and Y are the image's hexadecimal width and height in pixels
+ * When the instructions are over, a packet is sent entirely composed of Q's (NOTE or it should be, I still haven't managed to make it work)
  */
 //TODO Finish this, organise it into functions
 void Send(HANDLE Port)
 {
-  unsigned a; //The length of messages sent, we don't care about it, windows needs us to pass this to it
+  /*  unsigned a; //The length of messages sent, we don't care about it, windows needs us to pass this to it
     
   char BeginMessage[] = {'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I', 'I'};
   WriteFile(Port, BeginMessage, 9, (LPDWORD)&a, NULL);
@@ -159,7 +165,7 @@ void Send(HANDLE Port)
       ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
       if(Response[0] == 'C') break;
     }
-
+  */
   char PixelSizeString[256] = {};
   sprintf(PixelSizeString, "Pixel sizes: x=%d, y=%d", PaperMaxX / Image.w, PaperMaxY / Image.h);
     
@@ -177,14 +183,18 @@ void Send(HANDLE Port)
     {
       //We first make the packet...
       unsigned PacketPosition = 0; //A packet is 9 bytes; we keep track of the bytes we have already filled
-      char Packet[10] = {}; //We use sprintf
-      while(PacketPosition < 9)
+      char Packet[ImagePacketSize+1] = {}; //We use sprintf
+      while(PacketPosition < ImagePacketSize)
         {
 	  Instruction CurrentInstruction = (Path.empty()) ? Instruction(NoOp, Vector2D(0, 0)) : Path.front(); //We have to check whether the deque is empty
 	  
 	  if(!Path.empty())
 	    {
 	      Path.pop_front();
+	    }
+	  else
+	    {
+	      break;
 	    }
 	  Packet[PacketPosition] = InstructionLetters[CurrentInstruction.Type];
 	  PacketPosition++;
@@ -226,10 +236,10 @@ void Send(HANDLE Port)
         }
 
       //Then we send it...
-      bool Success = false;
+      /*  bool Success = false;
       while(!Success)
 	{
-	  WriteFile(Port, Packet, 9, (LPDWORD)&a, NULL);
+	  WriteFile(Port, Packet, ImagePacketSize, (LPDWORD)&a, NULL);
 	  char Response = 0;
 	  Sleep(100);
 	  ReadFile(Port, &Response, 1, (LPDWORD)&a, NULL);
@@ -243,7 +253,7 @@ void Send(HANDLE Port)
         
       //And finally we wait for the command to complete
       WaitForResponse(Port, 'D');
-
+      */
       char LogMessage[] = {"Sent packet XXXXXXXXX. Instructions left:           "};
       sprintf(LogMessage, "Sent packet %s. Instructions left: %d.", Packet, Path.size());
       Log(LogMessage, LogFileHandle);
@@ -251,13 +261,13 @@ void Send(HANDLE Port)
       SendPacket = false;
     }
 
-  char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
+  /* char EndMessage[] = {'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q', 'Q'};
   WriteFile(Port, EndMessage, 9, (LPDWORD)&a, NULL);
   Log("Ending.", LogFileHandle);
-  
+  */
   isSending = false;
   QuitSending = false;
-  CloseHandle(Port);
+  //CloseHandle(Port);
 }
 
 //We try to open all port to see which ones are active
@@ -305,18 +315,17 @@ void GreyScaleEuclideanNorm(unsigned *input, unsigned* output, unsigned w, unsig
     }
 }
 
-//just a crappy hack, hope I find the time to refactor
 void AddMoveTo(std::deque<Instruction>& Output, Vector2D StartPoint, Vector2D EndPoint)
 {
   InstructionTypeEnum XDirection, YDirection;
   if(StartPoint.x < EndPoint.x) XDirection = MoveRight; else XDirection = MoveLeft;
   if(StartPoint.y < EndPoint.y) YDirection = MoveDown; else YDirection = MoveUp;
   Output.push_back(Instruction(Lift));
-  for(int i = 1; i <= abs(EndPoint.x - StartPoint.x); i++)
+  for(int i = 0; i < abs(EndPoint.x - StartPoint.x); i++)
     {
       Output.push_back(Instruction(XDirection));
     }
-  for(int i = 1; i <= abs(EndPoint.y - StartPoint.y); i++)
+  for(int i = 0; i < abs(EndPoint.y - StartPoint.y); i++)
     {
       Output.push_back(Instruction(YDirection));
     }
@@ -326,7 +335,6 @@ void AddMoveTo(std::deque<Instruction>& Output, Vector2D StartPoint, Vector2D En
 //Our implementation of depth-first search. We do not use the OS's stack because it would overflow
 void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h, std::deque<Instruction>& Output, unsigned x, unsigned y)
 {
-  bool doReturn = false;
   std::stack<Vector2D> DFSStack {};
   unsigned CurrentX = x;
   unsigned CurrentY = y;
@@ -398,7 +406,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
         }
       CurrentPoint = NextPoint;
     }
-  AddMoveTo(Output, CurrentPoint, Vector2D(0,0)); //HACKS
+  LastPoint = CurrentPoint;
 }
 
 /*Our pathfinding algorithm. The way it works:
@@ -408,6 +416,7 @@ void DFSRecursion(unsigned* Input, unsigned* PixelStatus, unsigned w, unsigned h
 void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruction>& Output)
 {
   Output.clear();
+  LastPoint = Vector2D(0,0);
   unsigned *PixelStatus = new unsigned[w*h]; /*An array of the same size as the image. Every position is 0 if the corresponding pixel
 					      *is not coloured, 1 if it is but hasn't been found yet by the pathfinding, 2 if it has
 					      */
@@ -428,13 +437,15 @@ void DFSPathFinding(unsigned* Input, unsigned w, unsigned h, std::deque<Instruct
         {
 	  if(PixelStatus[y*w+x] == 1)
             {
-	      AddMoveTo(Output, Vector2D(0, 0), Vector2D(x, y)); //HACKS
+	      AddMoveTo(Output, LastPoint, Vector2D(x, y)); 
 	      DFSRecursion(Input, PixelStatus, w, h, Output, x, y);
             }
         }
     }
-  Output.pop_front(); //HACKS
-  delete PixelStatus;
+  AddMoveTo(Output, LastPoint, Vector2D(0, 0));
+  Output.pop_front(); //MoveTo adds a lift both as the first and last instruction, which we do not want
+  Output.pop_back();
+  delete[] PixelStatus;
 }
 
 void LogInstruction(Instruction instr)
@@ -492,7 +503,7 @@ LRESULT CALLBACK StatusCallback
     case WM_DESTROY:
       {
 	isDebuggerInitialised = false;
-	delete DebuggerImage.Pixels;
+	delete[] DebuggerImage.Pixels;
 	return 0;
 	break;
       }
@@ -582,7 +593,7 @@ INT_PTR SendDialogProc
 	      {
 	      case IDC_SEND:
 		{
-		  if(Processed && SerialListInitialised && !isSending)
+		  /*		  if(Processed && SerialListInitialised && !isSending)
 		    {
 		      isSending = true;
 		      unsigned PortID = SendMessage(GetDlgItem(hWnd, IDC_COMBO1), CB_GETCURSEL, 0, 0);
@@ -608,11 +619,11 @@ INT_PTR SendDialogProc
 		      SetCommState(Port, &CurrentCommState);
 		      COMMTIMEOUTS cto = {};
 		      cto.ReadIntervalTimeout = 100;
-		      SetCommTimeouts(Port, &cto);
-		      std::thread SendingThread (Send, Port);
+		      SetCommTimeouts(Port, &cto);*/
+		  std::thread SendingThread (Send, INVALID_HANDLE_VALUE /*Port*/);
 		      SendingThread.detach();
 		      return TRUE;
-		    }
+		      /*}*/
 		}
 	      case IDC_PAUSE:
 		{
@@ -692,7 +703,7 @@ LRESULT CALLBACK MainWindowCallback
 		  bool isCancelled = !GetOpenFileName(&OpenFile);
 		  if(isAnImageLoaded && !isCancelled)
 		    {
-		      delete Image.Pixels;
+		      delete[] Image.Pixels;
 		    }
 
 		  if(!isCancelled)
